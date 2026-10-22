@@ -607,13 +607,19 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
       videoPlayerOptions: videoPlayerOptions,
     );
 
-    if (videoPlayerOptions?.mixWithOthers != null) {
-      await _videoPlayerPlatform.setMixWithOthers(videoPlayerOptions!.mixWithOthers);
-    }
+    try {
+      if (videoPlayerOptions?.mixWithOthers != null) {
+        await _videoPlayerPlatform.setMixWithOthers(videoPlayerOptions!.mixWithOthers);
+      }
 
-    _playerId =
-        (await _videoPlayerPlatform.createWithOptions(creationOptions)) ?? kUninitializedPlayerId;
-    _creatingCompleter!.complete(null);
+      _playerId =
+          (await _videoPlayerPlatform.createWithOptions(creationOptions)) ?? kUninitializedPlayerId;
+    } finally {
+      // dispose() waits until a native player ID can no longer arrive. A failed
+      // creation attempt must release that wait too; initialize() still reports
+      // the failure to its caller.
+      _creatingCompleter!.complete();
+    }
     final initializingCompleter = Completer<void>();
 
     await _videoPlayerPlatform.setPreventsDisplaySleepDuringVideoPlayback(
@@ -706,16 +712,24 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
 
     if (_creatingCompleter != null) {
       await _creatingCompleter!.future;
-      if (!_isDisposed) {
-        _isDisposed = true;
-        _timer?.cancel();
-        await _eventSubscription?.cancel();
+    }
+    if (_isDisposed) {
+      return;
+    }
+
+    _isDisposed = true;
+    try {
+      _timer?.cancel();
+      await _eventSubscription?.cancel();
+      if (_playerId != kUninitializedPlayerId) {
         await _videoPlayerPlatform.dispose(_playerId);
       }
+    } finally {
+      // Native disposal can fail too. The controller must still stop observing
+      // application lifecycle changes and release its Dart listeners.
       _lifeCycleObserver?.dispose();
+      super.dispose();
     }
-    _isDisposed = true;
-    super.dispose();
   }
 
   /// Starts playing the video.

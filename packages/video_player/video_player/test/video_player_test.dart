@@ -509,6 +509,51 @@ void main() {
         await controller.initialize().catchError((Object e) => error = e);
         final platformEx = error as PlatformException;
         expect(platformEx.code, equals('VideoError'));
+        await controller.dispose();
+        expect(fakeVideoPlayerPlatform.disposedPlayerIds, <int>[controller.playerId]);
+      });
+
+      for (final disposeDuringCreation in <bool>[false, true]) {
+        test(
+          'creation failure releases disposal (already waiting: $disposeDuringCreation)',
+          () async {
+            final controller = VideoPlayerController.asset('video.mp4');
+            final creationStarted = Completer<void>();
+            final creation = Completer<void>();
+            final error = PlatformException(code: 'creation-failed');
+            fakeVideoPlayerPlatform.beforeCreate = () {
+              creationStarted.complete();
+              return creation.future;
+            };
+            final Future<void> initialization = expectLater(
+              controller.initialize(),
+              throwsA(same(error)),
+            );
+            await creationStarted.future;
+            final Future<void>? disposal = disposeDuringCreation ? controller.dispose() : null;
+            creation.completeError(error);
+            await initialization;
+            await (disposal ?? controller.dispose()).timeout(const Duration(seconds: 2));
+
+            expect(fakeVideoPlayerPlatform.disposedPlayerIds, isEmpty);
+            expect(() => controller.addListener(() {}), throwsFlutterError);
+          },
+        );
+      }
+
+      test('configuration failure before creation releases disposal', () async {
+        final controller = VideoPlayerController.asset(
+          'video.mp4',
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+        final error = PlatformException(code: 'configuration-failed');
+        fakeVideoPlayerPlatform.beforeMixWithOthers = () async => throw error;
+        await expectLater(controller.initialize(), throwsA(same(error)));
+        await controller.dispose().timeout(const Duration(seconds: 2));
+
+        expect(fakeVideoPlayerPlatform.calls, isNot(contains('createWithOptions')));
+        expect(fakeVideoPlayerPlatform.disposedPlayerIds, isEmpty);
+        expect(() => controller.addListener(() {}), throwsFlutterError);
       });
 
       test('file', () async {
@@ -600,6 +645,26 @@ void main() {
       await controller.dispose();
 
       expect(() async => controller.dispose(), returnsNormally);
+    });
+
+    testWidgets('native disposal failure still releases Dart resources', (
+      WidgetTester tester,
+    ) async {
+      final controller = VideoPlayerController.asset('video.mp4');
+      final error = PlatformException(code: 'disposal-failed');
+      fakeVideoPlayerPlatform.beforeDispose = () async => throw error;
+      await tester.runAsync(() async {
+        await controller.initialize();
+        await controller.play();
+        await expectLater(controller.dispose(), throwsA(same(error)));
+      });
+      expect(fakeVideoPlayerPlatform.streams[controller.playerId]!.hasListener, isFalse);
+      expect(() => controller.addListener(() {}), throwsFlutterError);
+      WidgetsBinding.instance.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      WidgetsBinding.instance.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(controller.value.isPlaying, isTrue);
     });
 
     test('play', () async {
@@ -2062,6 +2127,10 @@ void main() {
 class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   Completer<bool> initialized = Completer<bool>();
   Completer<void>? seekCompleter;
+  Future<void> Function()? beforeCreate;
+  Future<void> Function()? beforeMixWithOthers;
+  Future<void> Function()? beforeDispose;
+  final List<int> disposedPlayerIds = <int>[];
   List<String> calls = <String>[];
   List<DataSource> dataSources = <DataSource>[];
   List<VideoViewType> viewTypes = <VideoViewType>[];
@@ -2095,6 +2164,7 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   @override
   Future<int?> createWithOptions(VideoCreationOptions options) async {
     calls.add('createWithOptions');
+    await beforeCreate?.call();
     final stream = StreamController<VideoEvent>();
     streams[nextPlayerId] = stream;
     if (forceInitError) {
@@ -2117,6 +2187,8 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   @override
   Future<void> dispose(int playerId) async {
     calls.add('dispose');
+    disposedPlayerIds.add(playerId);
+    await beforeDispose?.call();
   }
 
   @override
@@ -2171,6 +2243,7 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   @override
   Future<void> setMixWithOthers(bool mixWithOthers) async {
     calls.add('setMixWithOthers');
+    await beforeMixWithOthers?.call();
   }
 
   @override

@@ -1,3 +1,8 @@
+## 2.14.2
+
+* Fixes disposal hanging when native player creation fails, and releases Dart
+  resources when native disposal fails.
+
 ## 2.14.1
 
 * Fixes late position updates after a controller is disposed.
