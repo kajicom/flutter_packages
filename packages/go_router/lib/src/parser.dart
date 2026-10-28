@@ -297,8 +297,10 @@ class GoRouteInformationParser extends RouteInformationParser<RouteMatchList> {
       case NavigatingType.go:
         return newMatchList;
       case NavigatingType.restore:
-        // If the URIs differ, use the new one; otherwise, keep the old.
-        if (baseRouteMatchList!.uri.toString() != newMatchList.uri.toString()) {
+        // A failed redirect must report its error even when the URI is unchanged.
+        // Only successful matching can reuse the stack supplied for restoration.
+        if (newMatchList.isError ||
+            baseRouteMatchList!.uri.toString() != newMatchList.uri.toString()) {
           return newMatchList;
         } else {
           return baseRouteMatchList;

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -207,6 +209,45 @@ void main() {
       expect(matches[1].route, routes[0].routes[0]);
     },
   );
+
+  for (final asynchronous in <bool>[false, true]) {
+    testWidgets('restoration reports redirect failure; asynchronous=$asynchronous', (
+      WidgetTester tester,
+    ) async {
+      final Directory directory = Directory.systemTemp.createTempSync('go_router_restore_');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final missingFile = File('${directory.path}/missing.txt');
+      String? loadMissingFile() {
+        missingFile.readAsStringSync();
+        return null;
+      }
+
+      final router = GoRouter(
+        routes: <GoRoute>[
+          GoRoute(path: '/', builder: (_, _) => const Text('Home')),
+          GoRoute(
+            path: '/loading',
+            redirect: (_, _) =>
+                asynchronous ? Future<String?>.sync(loadMissingFile) : loadMissingFile(),
+            builder: (_, _) => const Text('Loaded'),
+          ),
+        ],
+        errorBuilder: (_, _) => const Text('Route error'),
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      final RouteMatchList requested = router.configuration.findMatch(Uri.parse('/loading'));
+      router.restore(requested);
+      await tester.pumpAndSettle();
+
+      final RouteMatchList result = router.routerDelegate.currentConfiguration;
+      expect(result.uri, requested.uri);
+      expect(result.isError, isTrue);
+      expect(result.error!.message, contains(missingFile.path));
+      expect(find.text('Route error'), findsOneWidget);
+      expect(find.text('Loaded'), findsNothing);
+    });
+  }
 
   testWidgets(
     'GoRouteInformationParser can restore full route matches if optionURLReflectsImperativeAPIs is true',
