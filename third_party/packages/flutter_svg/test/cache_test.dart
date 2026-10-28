@@ -1,10 +1,28 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_svg/src/cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('A failed load reaches the caller and can be retried', () async {
+    final Directory directory = await Directory.systemTemp.createTemp('svg_cache_test');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/image.svg');
+    final cache = Cache();
+    Future<ByteData> load() async => ByteData.sublistView(await file.readAsBytes());
+
+    await expectLater(cache.putIfAbsent(file.path, load), throwsA(isA<FileSystemException>()));
+    expect(cache.count, 0);
+
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>';
+    await file.writeAsString(svg);
+    final ByteData data = await cache.putIfAbsent(file.path, load);
+    expect(String.fromCharCodes(data.buffer.asUint8List()), svg);
+    expect(cache.count, 1);
+  });
+
   test('Sanity', () async {
     final cache = Cache();
     expect(cache.maximumSize, 100);

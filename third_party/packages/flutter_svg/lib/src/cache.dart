@@ -57,9 +57,12 @@ class Cache {
     return evict(key);
   }
 
-  /// Returns the previously cached [PictureStream] for the given key, if available;
+  /// Returns the previously cached decoded SVG for the given key, if available;
   /// if not, calls the given callback to obtain it first. In either case, the
   /// key is moved to the "most recently used" position.
+  ///
+  /// Loading errors reach the caller without caching the failed load, so a
+  /// subsequent call can retry.
   ///
   /// The arguments must not be null. The `loader` cannot return null.
   Future<ByteData> putIfAbsent(Object key, Future<ByteData> Function() loader) {
@@ -78,11 +81,18 @@ class Cache {
     } else {
       pendingResult = loader();
       _pending[key] = pendingResult;
-      pendingResult.then((ByteData data) {
-        _pending.remove(key);
-        _add(key, data);
-        result = data; // in case it was a synchronous future.
-      });
+      pendingResult.then(
+        (ByteData data) {
+          _pending.remove(key);
+          _add(key, data);
+          result = data; // in case it was a synchronous future.
+        },
+        onError: (Object error, StackTrace stack) {
+          // The caller receives the loader's future. This cache callback handles
+          // its own error and removes the failed load so the caller can retry.
+          _pending.remove(key);
+        },
+      );
     }
     if (result != null) {
       _add(key, result!);

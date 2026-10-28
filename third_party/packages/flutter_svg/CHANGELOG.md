@@ -1,5 +1,6 @@
-## NEXT
+## 2.3.1
 
+* Fixes unhandled cache errors after a failed load and allows the load to be retried.
 * Updates minimum supported SDK version to Flutter 3.41/Dart 3.11.
 
 ## 2.3.0
